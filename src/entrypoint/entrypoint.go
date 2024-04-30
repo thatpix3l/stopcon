@@ -59,7 +59,7 @@ func (f Fragment) InputPath() string {
 }
 
 // Absolute path to [Fragment]'s new location, for renaming purposes.
-func (f Fragment) RenamePath() string {
+func (f Fragment) NewPath() string {
 	return filepath.Join(root.Rename.InputDirPath, f.NewName)
 }
 
@@ -315,18 +315,24 @@ func renameCommit(old string, new string) error {
 	return nil
 }
 
-// Print what will be renamed and rename old file into new file.
-func renameInfoCommit(old string, new string) error {
+func renameActionBuilder(actionList ...func(old string, new string) error) func(old string, new string) error {
+	return func(old, new string) error {
 
-	if err := renameInfo(old, new); err != nil {
-		return err
+		if old == new {
+
+			log.Infof("Already renamed: %s", old)
+
+			return nil
+		}
+
+		for _, action := range actionList {
+			if err := action(old, new); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	}
-
-	if err := renameCommit(old, new); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 var entries = Videos{}
@@ -375,7 +381,7 @@ func rename() error {
 
 	// Set renaming function to also rename if specified by user
 	if root.Rename.Commit {
-		renameAction = renameInfoCommit
+		renameAction = renameActionBuilder(renameInfo, renameCommit)
 	}
 
 	// Run rename action on each video [Fragment]
@@ -383,7 +389,7 @@ func rename() error {
 	for _, v := range entries {
 		for _, c := range v.Fragments {
 			old := c.InputPath()
-			new := c.RenamePath()
+			new := c.NewPath()
 
 			if totalFragments > 0 {
 				fmt.Println()
