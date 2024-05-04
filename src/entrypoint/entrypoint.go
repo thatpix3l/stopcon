@@ -38,6 +38,10 @@ type Metadata struct {
 }
 
 func (m Metadata) CreationTimeString() string {
+	if m.CreationTime == nil {
+		return ""
+	}
+
 	return m.CreationTime.Format("2006-01-02 15_04_05")
 }
 
