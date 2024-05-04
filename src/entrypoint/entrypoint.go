@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +94,39 @@ func ffprobeCmd(path string) []string {
 		"-hide_banner",
 		"-loglevel", "fatal",
 	}
+}
+
+func ffmpegCmd(dest string) []string {
+	return []string{
+		"ffmpeg",
+		"-protocol_whitelist", "file,pipe",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", "pipe:",
+		"-codec", "copy",
+		"-map_metadata", "0",
+		dest,
+	}
+}
+
+func (m Merged) concat() error {
+
+	sources := strings.Builder{}
+
+	for _, f := range m.Fragments {
+		if _, err := sources.WriteString(fmt.Sprintf("file '%s'\n", f.InputPath())); err != nil {
+			return err
+		}
+	}
+
+	cmd := cmdAdapter(exec.Command, ffmpegCmd(m.Name))
+	cmd.Stdin = strings.NewReader(sources.String())
+
+	if _, err := cmd.Output(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Parse and store embedded video [Fragment] metadata.
