@@ -233,16 +233,7 @@ type Merged struct {
 	Video
 	Fragments []Fragment // Individual video fragments that, when merged together, create a whole video.
 	Expected  int        // Total expected fragments for merged video.
-	name      string     // Cached pretty name
-}
-
-func (m *Merged) Name() string {
-
-	if m.name == "" {
-		m.name = fmt.Sprintf(format.Merged.Layout, m.CreationTimeString(), m.Id)
-	}
-
-	return m.name
+	Name      string     // Cached name for video merging purposes.
 }
 
 type Videos map[string]*Merged
@@ -261,7 +252,7 @@ func (v Videos) Add(name string) error {
 	videosMutex.Lock()
 	defer videosMutex.Unlock()
 
-	// Initialize video if never created for current f's ID
+	// Initialize video if never created for current [Fragment]'s ID
 	if _, ok := v[f.Id]; !ok {
 		v[f.Id] = &Merged{
 			Video:     f.Video,
@@ -280,17 +271,16 @@ func (v Videos) Add(name string) error {
 		merged.CreationTime = f.CreationTime
 	}
 
-	// Error if codec differs from each other
-	if merged.Codec != f.Codec {
-		return errors.New("merged and fragment video with ID's have differing video codecs")
-	}
-
 	// Store current [Fragment] into video
 	merged.Fragments = append(merged.Fragments, f)
 
 	// Update expected count of [Fragment]s if necessary
 	if f.Index > merged.Expected {
 		merged.Expected = f.Index
+	}
+
+	if merged.Name == "" {
+		merged.Name = fmt.Sprintf(format.Merged.Layout, merged.CreationTimeString(), merged.Id, "mkv")
 	}
 
 	return nil
