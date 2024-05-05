@@ -50,7 +50,7 @@ type Video struct {
 	Metadata
 }
 
-type Fragment struct {
+type VideoFragment struct {
 	Video
 	Index       int    // Video index for a complete video.
 	Extension   string // File name extension.
@@ -58,14 +58,14 @@ type Fragment struct {
 	NewName     string // File name for renaming purposes.
 }
 
-// Absolute path to [Fragment]'s current location.
-func (f Fragment) InputPath() string {
-	return filepath.Join(root.Rename.InputDirPath, f.CurrentName)
+// Absolute path to [VideoFragment]'s current location.
+func (f VideoFragment) InputPath() string {
+	return filepath.Join(root.InputDirPath, f.CurrentName)
 }
 
-// Absolute path to [Fragment]'s new location, for renaming purposes.
-func (f Fragment) NewPath() string {
-	return filepath.Join(root.Rename.InputDirPath, f.NewName)
+// Absolute path to [VideoFragment]'s new location, for renaming purposes.
+func (f VideoFragment) NewPath() string {
+	return filepath.Join(root.InputDirPath, f.NewName)
 }
 
 func cmdAdapter[Slice any, Output any](callback func(Slice, ...Slice) Output, c []Slice) Output {
@@ -113,7 +113,8 @@ func ffmpegCmd(dest string) []string {
 	}
 }
 
-func (m Merged) concat() error {
+// Merge separated video fragments into a single video file.
+func (m VideoWhole) merge() error {
 
 	sources := strings.Builder{}
 
@@ -123,7 +124,7 @@ func (m Merged) concat() error {
 		}
 	}
 
-	cmd := cmdAdapter(exec.Command, ffmpegCmd(m.Name))
+	cmd := cmdAdapter(exec.Command, ffmpegCmd(m.OutputPath()))
 	cmd.Stdin = strings.NewReader(sources.String())
 
 	if _, err := cmd.Output(); err != nil {
@@ -133,8 +134,8 @@ func (m Merged) concat() error {
 	return nil
 }
 
-// Parse and store embedded video [Fragment] metadata.
-func (f *Fragment) parseMetadata() error {
+// Parse and store embedded video [VideoFragment] metadata.
+func (f *VideoFragment) parseMetadata() error {
 
 	jsonBuf, err := cmdAdapter(exec.Command, ffprobeCmd(f.InputPath())).Output()
 	if err != nil {
@@ -173,7 +174,7 @@ func (f *Fragment) parseMetadata() error {
 }
 
 // Parser for GoPro-named partial recordings.
-func (f *Fragment) parseRaw() error {
+func (f *VideoFragment) parseRaw() error {
 
 	// Get matches based off of [Fragment]'s name.
 	matches := format.Raw.Regex.FindStringSubmatch(f.CurrentName)
@@ -194,7 +195,7 @@ func (f *Fragment) parseRaw() error {
 }
 
 // Parser for preferred-name partial recordings.
-func (f *Fragment) parseRenamed() error {
+func (f *VideoFragment) parseRenamed() error {
 
 	// Get matches based off of [Fragment]'s name.
 	matches := format.Renamed.Regex.FindStringSubmatch(f.CurrentName)
@@ -215,7 +216,7 @@ func (f *Fragment) parseRenamed() error {
 }
 
 // Parser for preferred-name merged recordings.
-func (f *Fragment) parseMerged() error {
+func (f *VideoFragment) parseMerged() error {
 	matches := format.Merged.Regex.FindStringSubmatch(f.CurrentName)
 	if len(matches) < len(format.Merged.Tokens.Slice) {
 		return errors.New("cannot parse as merged name")
@@ -244,7 +245,7 @@ func GetFunctionName(i interface{}) (string, error) {
 }
 
 // Parse fragment by its name and embedded metadata.
-func (f *Fragment) Parse() error {
+func (f *VideoFragment) Parse() error {
 
 	nameParsers := []func() error{f.parseRenamed, f.parseRaw, f.parseMerged}
 
@@ -266,22 +267,27 @@ func (f *Fragment) Parse() error {
 
 }
 
-// Merged [Video], composed of one or more [Fragment]s
-type Merged struct {
+// VideoWhole [Video], composed of one or more [VideoFragment]s
+type VideoWhole struct {
 	Video
-	Fragments []Fragment // Individual video fragments that, when merged together, create a whole video.
-	Expected  int        // Total expected fragments for merged video.
-	Name      string     // Cached name for video merging purposes.
+	Fragments []VideoFragment // Individual video fragments that, when merged together, create a whole video.
+	Expected  int             // Total expected fragments for merged video.
+	Name      string          // Cached name for video merging purposes.
 }
 
-type Videos map[string]*Merged
+// Absolute path to output when merging [VideoWhole].
+func (vw VideoWhole) OutputPath() string {
+	return filepath.Join(root.Merge.OutputDirPath, vw.Name)
+}
+
+type VideoList map[string]*VideoWhole
 
 var videosMutex = sync.RWMutex{}
 
-// Add entry as a new video [Fragment].
-func (v Videos) Add(name string) error {
+// Add entry as a new video [VideoFragment].
+func (v VideoList) Add(name string) error {
 
-	f := Fragment{CurrentName: name}
+	f := VideoFragment{CurrentName: name}
 
 	if err := f.Parse(); err != nil {
 		return err
@@ -292,9 +298,9 @@ func (v Videos) Add(name string) error {
 
 	// Initialize video if never created for current [Fragment]'s ID
 	if _, ok := v[f.Id]; !ok {
-		v[f.Id] = &Merged{
+		v[f.Id] = &VideoWhole{
 			Video:     f.Video,
-			Fragments: []Fragment{},
+			Fragments: []VideoFragment{},
 		}
 	}
 
@@ -363,42 +369,51 @@ func renameActionBuilder(actionList ...func(old string, new string) error) func(
 	}
 }
 
-var entries = Videos{}
+var videoList = VideoList{}
 
-func rename() error {
+func (e VideoList) Parse() error {
 
-	videoEntries, err := os.ReadDir(root.Rename.InputDirPath)
+	dirEntries, err := os.ReadDir(root.InputDirPath)
 	if err != nil {
 		return err
 	}
 
-	renameMessage := "Renaming (Dry Run)"
-	if root.Rename.Commit {
-		renameMessage = "Renaming"
-	}
-
-	entriesWG := sync.WaitGroup{}
+	addWG := sync.WaitGroup{}
 
 	// For each entry in input directory...
-	for _, entry := range videoEntries {
+	for _, entry := range dirEntries {
 
-		entriesWG.Add(1)
+		addWG.Add(1)
 
 		// Parse and add entry to list of video entries, store error if any.
 		go func(e fs.DirEntry) {
-			defer entriesWG.Done()
-			if err := entries.Add(e.Name()); err != nil {
+			defer addWG.Done()
+			if err := videoList.Add(e.Name()); err != nil {
 				log.Warnf("entry %s cannot be added: %v", styleExample.Render(e.Name()), styleError.Render(err.Error()))
 			}
 		}(entry)
 
 	}
 
-	entriesWG.Wait()
+	addWG.Wait()
 
-	// Error if no entries to process
-	if len(entries) == 0 {
+	// Error if no videos to process
+	if len(videoList) == 0 {
 		return fmt.Errorf("directory does not contain GoPro-named videos")
+	}
+
+	return nil
+}
+
+func rename() error {
+
+	if err := videoList.Parse(); err != nil {
+		return err
+	}
+
+	renameMessage := "Renaming (Dry Run)"
+	if root.Rename.Commit {
+		renameMessage = "Renaming"
 	}
 
 	// Print renaming message
@@ -414,10 +429,10 @@ func rename() error {
 
 	// Run rename action on each video [Fragment]
 	totalFragments := 0
-	for _, v := range entries {
-		for _, c := range v.Fragments {
-			old := c.InputPath()
-			new := c.NewPath()
+	for _, vm := range videoList {
+		for _, vf := range vm.Fragments {
+			old := vf.InputPath()
+			new := vf.NewPath()
 
 			if totalFragments > 0 {
 				fmt.Println()
@@ -436,6 +451,29 @@ func rename() error {
 	return nil
 }
 
+func merge() error {
+
+	if err := videoList.Parse(); err != nil {
+		return err
+	}
+
+	for _, vm := range videoList {
+
+		fmt.Printf("merging videos with ID \"%s\"...", vm.Id)
+
+		if err := vm.merge(); err != nil {
+			fmt.Println("error!")
+			log.Warnf("%v", err)
+
+		} else {
+			fmt.Println("done!")
+		}
+	}
+
+	return nil
+
+}
+
 func Main() {
 
 	log.SetLevel(log.DebugLevel)
@@ -449,10 +487,20 @@ func Main() {
 		return
 	}
 
-	// Rename all video files in directory matching GoPro video file naming convention
-	if err := rename(); err != nil {
-		log.Errorf("%v", err)
-		return
+	if root.Rename != nil {
+		// Rename all video files in directory.
+		if err := rename(); err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+	}
+
+	if root.Merge != nil {
+		// Merge all video files that have matching IDs in directory.
+		if err := merge(); err != nil {
+			log.Errorf("%v", err)
+			return
+		}
 	}
 
 }

@@ -9,12 +9,17 @@ import (
 )
 
 type CmdRename struct {
-	InputDirPath string `arg:"--input-dir,required" help:"directory containing GoPro video files"`
-	Commit       bool   `help:"really rename files, not just do a dry run"`
+	Commit bool `help:"really rename files, not just do a dry run"`
+}
+
+type CmdMerge struct {
+	OutputDirPath string `arg:"--output-dir,required" help:"directory to output merged GoPro video files"`
 }
 
 type CmdRoot struct {
-	Rename *CmdRename `arg:"subcommand:rename" help:"rename GoPro video files"`
+	Rename       *CmdRename `arg:"subcommand:rename" help:"rename GoPro video files"`
+	Merge        *CmdMerge  `arg:"subcommand:merge" help:"merge GoPro video files"`
+	InputDirPath string     `arg:"--input-dir,required" help:"directory containing GoPro video files"`
 }
 
 func isSubcommand(s reflect.StructField) bool {
