@@ -285,7 +285,7 @@ type VideoList map[string]*VideoWhole
 var videosMutex = sync.RWMutex{}
 
 // Add entry as a new video [VideoFragment].
-func (v VideoList) Add(name string) error {
+func (vl VideoList) Add(name string) error {
 
 	f := VideoFragment{CurrentName: name}
 
@@ -297,15 +297,15 @@ func (v VideoList) Add(name string) error {
 	defer videosMutex.Unlock()
 
 	// Initialize video if never created for current [Fragment]'s ID
-	if _, ok := v[f.Id]; !ok {
-		v[f.Id] = &VideoWhole{
+	if _, ok := vl[f.Id]; !ok {
+		vl[f.Id] = &VideoWhole{
 			Video:     f.Video,
 			Fragments: []VideoFragment{},
 		}
 	}
 
 	// Address of current merged
-	merged := v[f.Id]
+	merged := vl[f.Id]
 
 	// If video already contains date, assign it to [Fragment]; otherwise, parse and set both.
 	if merged.CreationTime != nil {
@@ -369,9 +369,7 @@ func renameActionBuilder(actionList ...func(old string, new string) error) func(
 	}
 }
 
-var videoList = VideoList{}
-
-func (e VideoList) Parse() error {
+func (vl VideoList) Parse() error {
 
 	dirEntries, err := os.ReadDir(root.InputDirPath)
 	if err != nil {
@@ -388,7 +386,7 @@ func (e VideoList) Parse() error {
 		// Parse and add entry to list of video entries, store error if any.
 		go func(e fs.DirEntry) {
 			defer addWG.Done()
-			if err := videoList.Add(e.Name()); err != nil {
+			if err := vl.Add(e.Name()); err != nil {
 				log.Warnf("entry %s cannot be added: %v", styleExample.Render(e.Name()), styleError.Render(err.Error()))
 			}
 		}(entry)
@@ -398,12 +396,14 @@ func (e VideoList) Parse() error {
 	addWG.Wait()
 
 	// Error if no videos to process
-	if len(videoList) == 0 {
+	if len(vl) == 0 {
 		return fmt.Errorf("directory does not contain GoPro-named videos")
 	}
 
 	return nil
 }
+
+var videoList = VideoList{}
 
 func rename() error {
 
