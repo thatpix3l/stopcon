@@ -8,18 +8,18 @@ import (
 	"strings"
 )
 
-type CmdRename struct {
+type cmdRename struct {
 	Commit bool `help:"really rename files, not just do a dry run"`
 }
 
-type CmdMerge struct {
-	OutputDirPath string `arg:"--output-dir,required" help:"directory to output merged GoPro video files"`
+type cmdMerge struct {
+	OutputDirPath string `arg:"--output-dir,required" help:"directory to store merged videos"`
 }
 
 type CmdRoot struct {
-	Rename       *CmdRename `arg:"subcommand:rename" help:"rename GoPro video files"`
-	Merge        *CmdMerge  `arg:"subcommand:merge" help:"merge GoPro video files"`
-	InputDirPath string     `arg:"--input-dir,required" help:"directory containing GoPro video files"`
+	Rename       *cmdRename `arg:"subcommand:rename" help:"rename videos"`
+	Merge        *cmdMerge  `arg:"subcommand:merge" help:"merge videos"`
+	InputDirPath string     `arg:"--input-dir,required" help:"directory containing videos"`
 }
 
 func isSubcommand(s reflect.StructField) bool {

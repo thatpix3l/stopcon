@@ -8,8 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,17 +112,17 @@ func ffmpegCmd(dest string) []string {
 }
 
 // Merge separated video fragments into a single video file.
-func (m VideoWhole) merge() error {
+func (vw VideoWhole) merge() error {
 
 	sources := strings.Builder{}
 
-	for _, f := range m.Fragments {
+	for _, f := range vw.Fragments {
 		if _, err := sources.WriteString(fmt.Sprintf("file '%s'\n", f.InputPath())); err != nil {
 			return err
 		}
 	}
 
-	cmd := cmdAdapter(exec.Command, ffmpegCmd(m.OutputPath()))
+	cmd := cmdAdapter(exec.Command, ffmpegCmd(vw.OutputPath()))
 	cmd.Stdin = strings.NewReader(sources.String())
 
 	if _, err := cmd.Output(); err != nil {
@@ -135,9 +133,9 @@ func (m VideoWhole) merge() error {
 }
 
 // Parse and store embedded video [VideoFragment] metadata.
-func (f *VideoFragment) parseMetadata() error {
+func (vf *VideoFragment) parseMetadata() error {
 
-	jsonBuf, err := cmdAdapter(exec.Command, ffprobeCmd(f.InputPath())).Output()
+	jsonBuf, err := cmdAdapter(exec.Command, ffprobeCmd(vf.InputPath())).Output()
 	if err != nil {
 		return err
 	}
@@ -167,17 +165,17 @@ func (f *VideoFragment) parseMetadata() error {
 	}
 
 	// Store into video [Fragment]
-	f.Metadata.Codec = codec
-	f.Metadata.CreationTime = &creationTime
+	vf.Metadata.Codec = codec
+	vf.Metadata.CreationTime = &creationTime
 
 	return nil
 }
 
 // Parser for GoPro-named partial recordings.
-func (f *VideoFragment) parseRaw() error {
+func (vf *VideoFragment) parseRaw() error {
 
 	// Get matches based off of [Fragment]'s name.
-	matches := format.Raw.Regex.FindStringSubmatch(f.CurrentName)
+	matches := format.Raw.Regex.FindStringSubmatch(vf.CurrentName)
 	if len(matches) < len(format.Raw.Tokens.Slice) {
 		return errors.New("cannot parse as raw name")
 	}
@@ -187,18 +185,18 @@ func (f *VideoFragment) parseRaw() error {
 		return errors.New("cannot parse index as an integer")
 	}
 
-	f.Id = matches[3]
-	f.Index = index
-	f.Extension = matches[4]
+	vf.Id = matches[3]
+	vf.Index = index
+	vf.Extension = matches[4]
 
 	return nil
 }
 
 // Parser for preferred-name partial recordings.
-func (f *VideoFragment) parseRenamed() error {
+func (vf *VideoFragment) parseRenamed() error {
 
 	// Get matches based off of [Fragment]'s name.
-	matches := format.Renamed.Regex.FindStringSubmatch(f.CurrentName)
+	matches := format.Renamed.Regex.FindStringSubmatch(vf.CurrentName)
 	if len(matches) < len(format.Renamed.Tokens.Slice) {
 		return errors.New("cannot parse as pretty name")
 	}
@@ -208,55 +206,40 @@ func (f *VideoFragment) parseRenamed() error {
 		return err
 	}
 
-	f.Id = matches[format.Renamed.Tokens.Map["id"].Index+1]
-	f.Index = index
-	f.Extension = matches[format.Renamed.Tokens.Map["extension"].Index+1]
+	vf.Id = matches[format.Renamed.Tokens.Map["id"].Index+1]
+	vf.Index = index
+	vf.Extension = matches[format.Renamed.Tokens.Map["extension"].Index+1]
 
 	return nil
 }
 
 // Parser for preferred-name merged recordings.
-func (f *VideoFragment) parseMerged() error {
-	matches := format.Merged.Regex.FindStringSubmatch(f.CurrentName)
+func (vf *VideoFragment) parseMerged() error {
+	matches := format.Merged.Regex.FindStringSubmatch(vf.CurrentName)
 	if len(matches) < len(format.Merged.Tokens.Slice) {
 		return errors.New("cannot parse as merged name")
 	}
 
-	f.Id = matches[2]
-	f.Extension = matches[3]
+	vf.Id = matches[2]
+	vf.Extension = matches[3]
 
 	return nil
 
 }
 
-func GetFunctionName(i interface{}) (string, error) {
-
-	var out string
-
-	v := reflect.ValueOf(i)
-
-	if v.Type().Kind() != reflect.Func {
-		return out, errors.New("")
-	}
-
-	out = runtime.FuncForPC(v.Pointer()).Name()
-
-	return out, nil
-}
-
 // Parse fragment by its name and embedded metadata.
-func (f *VideoFragment) Parse() error {
+func (vf *VideoFragment) Parse() error {
 
-	nameParsers := []func() error{f.parseRenamed, f.parseRaw, f.parseMerged}
+	nameParsers := []func() error{vf.parseRenamed, vf.parseRaw, vf.parseMerged}
 
 	for _, nameParser := range nameParsers {
 		if err := nameParser(); err == nil {
 
-			if err := f.parseMetadata(); err != nil {
+			if err := vf.parseMetadata(); err != nil {
 				return err
 			}
 
-			f.NewName = fmt.Sprintf(format.Renamed.Layout, f.CreationTimeString(), f.Id, f.Index, f.Extension)
+			vf.NewName = fmt.Sprintf(format.Renamed.Layout, vf.CreationTimeString(), vf.Id, vf.Index, vf.Extension)
 
 			return nil
 
@@ -407,10 +390,6 @@ var videoList = VideoList{}
 
 func rename() error {
 
-	if err := videoList.Parse(); err != nil {
-		return err
-	}
-
 	renameMessage := "Renaming (Dry Run)"
 	if root.Rename.Commit {
 		renameMessage = "Renaming"
@@ -453,15 +432,11 @@ func rename() error {
 
 func merge() error {
 
-	if err := videoList.Parse(); err != nil {
-		return err
-	}
+	for _, vw := range videoList {
 
-	for _, vm := range videoList {
+		fmt.Printf("merging videos with ID \"%s\"...", vw.Id)
 
-		fmt.Printf("merging videos with ID \"%s\"...", vm.Id)
-
-		if err := vm.merge(); err != nil {
+		if err := vw.merge(); err != nil {
 			fmt.Println("error!")
 			log.Warnf("%v", err)
 
@@ -487,16 +462,22 @@ func Main() {
 		return
 	}
 
+	// Parse directory supposedly containing GoPro videos
+	if err := videoList.Parse(); err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+
+	// Rename videos.
 	if root.Rename != nil {
-		// Rename all video files in directory.
 		if err := rename(); err != nil {
 			log.Errorf("%v", err)
 			return
 		}
 	}
 
+	// Merge videos
 	if root.Merge != nil {
-		// Merge all video files that have matching IDs in directory.
 		if err := merge(); err != nil {
 			log.Errorf("%v", err)
 			return
